@@ -85,8 +85,8 @@ $ helm repo add stable https://kubernetes-charts.storage.googleapis.com/ </code>
 
 Mailhog 은 메일 테스트 전용 서버입니다. 테스트용이라는 특성을 감안해야 이해할 수 있는 행동을 합니다.
 다음 명령으로 설치합니다.
-<pre><code> helm repo add codecentric https://codecentric.github.io/helm-charts 
-helm install mailhog --set env.service.nodePort.smtp=31025 codecentric/mailhog  </code></pre>
+<pre><code>helm repo add codecentric https://codecentric.github.io/helm-charts 
+helm install mailhog codecentric/mailhog  </code></pre>
 
 PC의 브라우저에서 접근해야 하니까 PC의 hosts 파일에 <code>${k8s-head 호스트의 IP} mail.k8s.com</code> 문장을 추가합니다. 
 (같은 IP로 keycloak.k8s.com 이 등록되어 있을 테니 합치는 게 낫겠네요)
@@ -114,7 +114,35 @@ $ kubectl apply -f mailhog-ing.yaml
 
 이렇게 하면 https://mail.k8s.com:32443 으로 접근 가능합니다.
 
+## private docker registry 설치
+
+어플리케이션을 띄우고 버전 관리를 하려면 자체 도커 이미지 저장소가 있어야 할 것입니다.
+이것도 역시 helm으로 비교적 쉽게 설치됩니다.
+
+<pre><code>$ helm install registry stable/docker-registry </code></pre>
+
+편의상 모든 차트를 네임스페이스 지정 없이 설치하고 있는데, 이렇게 하면 모두 default 네임스페이스에 설치됩니다.
+
+그리고 이렇게 설치한 registry 는 다음과 같은 특징을 가집니다:
+- https 접근이 아닌 http 접근을 허용합니다. 
+- registry는 브라우저로 접근하는 게 아닙니다. 한편으론 <code>docker build/push</code> 명령으로 접근하고 한편으론 k8s pod 내에서 접근할 것입니다.
+
+이러한 제약 때문에 동일한 URL로 이곳저곳에서 접근이 가능한 방법을 모색해 보았는데 결국 다음으로 정했습니다:
+- nodeport 기반으로 서비스를 설정
+- 모든 노드의 /etc/hosts 에 호스트명 registry.k8s.com 을 설정
+  <pre><code>$ sudo vi /etc/hosts
+  ...
+  192.128.205.10       ... registry.k8s.com  # nodeport니까 아무 호스트나
+  </code></pre>
+- 모든 노드에서 docker 가 http 접근이 되도록 설정
+  <pre><code>$ sudo vi /etc/docker/daemon.json
+  {
+      "insecure-registries": ["registry.k8s.com:31000"]
+  }
+  $ sudo systemctl restart docker
+  </code></pre>
+
+docker restart 할 때 당연히 지금까지 설치된 pod들이 재시작합니다. 유의해 주세요.
 
 
 
-  
