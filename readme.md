@@ -251,6 +251,56 @@ spec:
 마찬가지로 적용합니다.
 <pre><code>kubectl apply -f js-console-svc.yaml</code></pre>
 
+## openldap 설치
+
+openldap을 설치해 봅시다.
+<pre><code>$ helm install openldap stable/openldap
+You can access the LDAP adminPassword and configPassword using:
+  kubectl get secret --namespace default openldap -o jsonpath="{.data.LDAP_ADMIN_PASSWORD}" | base64 --decode; echo
+  kubectl get secret --namespace default openldap -o jsonpath="{.data.LDAP_CONFIG_PASSWORD}" | base64 --decode; echo
+You can access the LDAP service, from within the cluster (or with kubectl port-forward) with a command like (replace password and domain):
+  ldapsearch -x -H ldap://openldap.default.svc.cluster.local:389 -b dc=example,dc=org -D "cn=admin,dc=example,dc=org" -w $LDAP_ADMIN_PASSWORD
+</code></pre>
+설치 직후에 로그인 패스워드를 어떻게 얻는 지를 메시지로 출력하고 있습니다. 만약 바꾸고 싶다면 위의 설명을 참조해서 적용해야겠죠.
+
+그런데 현재 virtualbox 기반의 호스트에서 openldap.default.svc.cluster.local 식의 호스트 접근이 불가합니다. (왜 그런지 추가조사가 필요합니다)
+그래서 CLI 방식으로 ldap을 관리하는 걸 과감히(?) 포기하고 관리용 UI인 phpldapadmin 을 설치하기로 합니다.
+<pre><code>$ helm repo add cetic https://cetic.github.io/helm-charts
+$ helm install phpldapadmin cetic/phpldapadmin
+</code></pre>
+이것만으로 끝이 아닙니다. 사실 
+
+
+
+
+
+
+이것도 설치하면 사용 가이드 메시지가 출력되는데 이는 무시합시다. Ingress 설정으로 풀겠습니다.
+- PC의 hosts 에 <code>192.128.205.10  phpldapadmin.k8s.com </code> 을 등록합니다.
+- Ingress 를 추가합니다.
+  <pre><code>apiVersion: extensions/v1beta1
+  kind: Ingress
+  metadata:
+    annotations:
+    generation: 1
+    name: phpldapadmin
+    namespace: default
+  spec:
+    rules:
+    - host: phpldapadmin.k8s.com
+      http:
+        paths:
+        - backend:
+            serviceName: phpldapadmin
+            servicePort: 80
+          pathType: ImplementationSpecific
+    tls:
+    - hosts:
+      - phpldapadmin.k8s.com
+      #secretName: keycloak-tls-secret-2020
+  status:
+    loadBalancer: {}
+  </code></pre>
 
 
 
