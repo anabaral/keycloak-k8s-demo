@@ -142,7 +142,115 @@ $ kubectl apply -f mailhog-ing.yaml
   $ sudo systemctl restart docker
   </code></pre>
 
-docker restart 할 때 당연히 지금까지 설치된 pod들이 재시작합니다. 유의해 주세요.
+※ docker restart 할 때 당연히 지금까지 설치된 pod들이 재시작합니다. 유의해 주세요.
+※ 이 저장소는 인증을 요하지 않는 저장소입니다. 실제로는 인증이 필요하겠죠.. 앞으로의 과제로..
+
+## js-console 설치
+
+keycloak-containers-demo 프로젝트에서 SSO 테스트 및 공유정보 확인용으로 사용했던 js-console을 여기서도 설치해 봅시다.
+이 이미지를 registry에 등록하고 띄우는 방식을 쓰겠습니다. 이미지는 앞서 프로젝트에서 만든 것을 쓸 수도 있는데 처음부터 한다고 가정해 보겠습니다.
+
+keycloak에서의 설정과 js-console에서의 설정 선후관계가 엇갈리는데 일단 몇 가지 가정을 깔겠습니다:
+- http://demo.k8s.com:30080 으로 어플리케이션에 접속할 생각입니다.
+- 당연히 PC의 hosts 파일에 <code>192.128.205.10  demo.k8s.com </code> 을 등록해야 합니다. 
+- 레지스트리 url은 registry.k8s.com:31000/demo-js-console 으로 할 생각입니다.
+
+Keycloak UI 에서 demo realm 의 clients 메뉴를 선택하고
+- js-console 을 추가합니다. 추가 후 
+- Settings 탭에서 Valid Redirect URIs = http://demo.k8s.com:30080/* , Web Origins = http://demo.k8s.com:30080 를 입력합니다.
+- Installation 탭에서 Format Option 을 'Keycloak OIDC JSON' 으로 택하면 나오는 json 내용을 복사해 둡니다.
+
+<pre><code>$ git clone https://github.com/anabaral/keycloak-containers-demo
+$ cd keycloak-containers-demo/js-console
+$ vi src/keycloak.json   # 이 내용을 위에 복사해 둔 json으로 바꿉니다.
+$ vi index.html          # 여기 script 태그가 있는데 그 src 내용을 https://keycloak.k8s.com:32443/auth/js/keycloak.js 로 바꿉니다.
+$ vi build.sh
+#!/bin/sh
+IMG_URL=registry.k8s.com:31000/default/demo-js-console
+docker build -t demo-js-console .
+docker tag demo-js-console ${IMG_URL}
+docker push ${IMG_URL}
+$ sh build.sh
+</code></pre>
+여기까지 잘 되었으면 좋겠네요. 뭔가 문제가 있다면 하나씩 차근차근 풀어야 합니다.
+
+이제 본격적으로 deploy해 볼 차례입니다. js-console-deploy.yaml 을 작성합니다.
+<pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+  generation: 1
+  labels:
+    app: js-console
+    release: js-console
+  name: js-console
+  namespace: default
+spec:
+  minReadySeconds: 5
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: js-console
+      release: js-console
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: js-console
+        release: js-console
+    spec:
+      containers:
+      - image: registry.k8s.com:31000/default/demo-js-console:latest
+        imagePullPolicy: Always
+        name: js-console
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      #securityContext:
+      #  fsGroup: 1000
+      #  runAsUser: 1000
+      terminationGracePeriodSeconds: 30
+status:
+</code></pre>
+이제 적용합니다.
+<pre><code>kubectl apply -f js-console-deploy.yaml</code></pre>
+
+이번엔 서비스입니다. js-console-svc.yaml 파일을 작성합니다.
+<pre><code>apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+  labels:
+    app: js-console
+  name: js-console
+  namespace: default
+spec:
+  ports:
+  - name: http
+    port: 8000
+    nodePort: 30080
+    protocol: TCP
+    targetPort: 80
+  selector:
+    app: js-console
+    release: js-console
+  type: NodePort
+</code></pre>
+마찬가지로 적용합니다.
+<pre><code>kubectl apply -f js-console-svc.yaml</code></pre>
+
 
 
 
