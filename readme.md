@@ -337,6 +337,51 @@ $ kubectl apply -f phpldapadmin-deploy.yaml
 
 ## Jenkins 설치 및 설정
 
+Jenkins를 설치해 보겠습니다. 이것 역시 chart를 수정해서 설치하는 방식이 아니라 일단 기본구성으로 설치해 보고 조금씩 수정해 나가는 전략을 쓸 겁니다.
+<pre><code>$ helm install jenkins stable/jenkins
+NAME: jenkins
+LAST DEPLOYED: Thu Jun 18 08:40:42 2020
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+NOTES:
+1. Get your 'admin' user password by running:
+  printf $(kubectl get secret --namespace default jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode);echo
+2. Get the Jenkins URL to visit by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace default -l "app.kubernetes.io/component=jenkins-master" -l "app.kubernetes.io/instance=jenkins" -o jsonpath="{.items[0].metadata.name}")
+  echo http://127.0.0.1:8080
+  kubectl --namespace default port-forward $POD_NAME 8080:8080
 
+3. Login with the password from step 1 and the username: admin
+
+4. Use Jenkins Configuration as Code by specifying configScripts in your values.yaml file, see documentation: http:///configuration-as-code and examples: https://github.com/jenkinsci/configuration-as-code-plugin/tree/master/demos
+For more information on running Jenkins on Kubernetes, visit:
+https://cloud.google.com/solutions/jenkins-on-container-engine
+For more information about Jenkins Configuration as Code, visit:
+https://jenkins.io/projects/jcasc/</code></pre>
+출력되는 메시지를 잘 읽어보면 다음 내용입니다:
+- admin 비밀번호를 얻는 방법이 있습니다. 
+- port-forward 가 필요하다고 나옵니다. 하지만 이 방식을 쓰지는 않고 nodeport를 쓸 생각입니다. (ingress 추가해서 쓸 수도 있습니다)
+- configuration-as-code 방식이 최신버전에 도입됩니다.
+
+이 메시지들과는 별개로 jenkins는 정상부팅되지 않을 겁니다. 기본적으로 설정된 persistent volume claim 이 없는 값이거든요.
+이걸 해결하기 위해 다음과 같이 설정합니다 (내용을 단순화했습니다) :
+<pre><code>spec:
+  template:
+    spec:
+      hostAliases:
+      - hostnames:
+        - keycloak.k8s.com
+        ip: 192.128.205.10
+      volumes:
+      - name: jenkins-home
+#        persistentVolumeClaim:
+#          claimName: jenkins
+        hostPath:
+          path: /vagrant/keycloak/test2/jenkins_home  # 적절한 디렉터리를 잡습니다
+          type: ""
+</code></pre>
+
+이렇게 하면 일단 뜹니다.
 
 
