@@ -7,6 +7,8 @@
 - keycloak의 기본 기능을 연습해 보는 의미가 강합니다.
 - 따라서 설치를 할 때 무언가 많이 먼저 준비하고 하기 보다는, 일단 단순하게 띄워 보고 조금씩 개선하는 형태로 할 겁니다.
   그래서 연습이 다 끝난 후 실 환경에서 설치하려고 할 때는 오히려 번잡할 수 있습니다.
+  이에 대비되는 방식은 이를테면 helm chart 설치를 할 때 일단 chart를 다운로드 받은 후 압축을 풀어 템플리트 파일들을 손본 후 설치하는 식인데
+  이게 일반적이고 더 깔끔하지만 공부하는 입장에서는 왜 그걸 하는지 잘 와닿지 않을 수 있습니다.
 
 ## keycloak 설치 및 설정
 
@@ -251,7 +253,7 @@ spec:
 마찬가지로 적용합니다.
 <pre><code>kubectl apply -f js-console-svc.yaml</code></pre>
 
-## openldap 설치
+## openldap 설치 및 설정
 
 openldap을 설치해 봅시다.
 <pre><code>$ helm install openldap stable/openldap
@@ -263,19 +265,13 @@ You can access the LDAP service, from within the cluster (or with kubectl port-f
 </code></pre>
 설치 직후에 로그인 패스워드를 어떻게 얻는 지를 메시지로 출력하고 있습니다. 만약 바꾸고 싶다면 위의 설명을 참조해서 적용해야겠죠.
 
-그런데 현재 virtualbox 기반의 호스트에서 openldap.default.svc.cluster.local 식의 호스트 접근이 불가합니다. (왜 그런지 추가조사가 필요합니다)
+그런데 현재 virtualbox 기반의 호스트에서 openldap.default.svc.cluster.local 식의 호스트 접근이 불가합니다. (왜 그런지 추가조사는 필요합니다)
 그래서 CLI 방식으로 ldap을 관리하는 걸 과감히(?) 포기하고 관리용 UI인 phpldapadmin 을 설치하기로 합니다.
 <pre><code>$ helm repo add cetic https://cetic.github.io/helm-charts
 $ helm install phpldapadmin cetic/phpldapadmin
 </code></pre>
-이것만으로 끝이 아닙니다. 사실 
 
-
-
-
-
-
-이것도 설치하면 사용 가이드 메시지가 출력되는데 이는 무시합시다. Ingress 설정으로 풀겠습니다.
+설치하면 사용 가이드 메시지가 출력되는데 이는 무시합시다. Ingress 설정으로 풀겠습니다.
 - PC의 hosts 에 <code>192.128.205.10  phpldapadmin.k8s.com </code> 을 등록합니다.
 - Ingress 를 추가합니다.
   <pre><code>apiVersion: extensions/v1beta1
@@ -301,6 +297,46 @@ $ helm install phpldapadmin cetic/phpldapadmin
   status:
     loadBalancer: {}
   </code></pre>
+
+이것만으로 끝이 아닙니다. 단순 설치만 해서는 앞서 설치한 openldap을 가리킬 리가 없으니까요.
+
+다음과 같이 추가로 설정합시다:
+<pre><code>$ kubectl get deploy -n default -o yaml > phpldapadmin-deploy.yaml
+$ vi phpldapadmin-deploy.yaml # LDAP_HOSTS 설정하자
+...
+spec:
+      containers:
+      - envFrom:
+        - configMapRef:
+            name: phpldapadmin
+        env:
+        - name: PHPLDAPADMIN_HTTPS
+          value: "false"
+        - name: PHPLDAPADMIN_LDAP_HOSTS
+          value: openldap.default
+...
+$ kubectl apply -f phpldapadmin-deploy.yaml
+</code></pre>
+
+여기까지 하면 https://phpldapadmin.k8s.com:32443/ 으로 접속이 됩니다.
+로그인 입력폼에 다음을 입력하여 로그인합니다:
+- Login DN: cn=admin,dc=example,dc=org
+- Password: 비밀번호( LDAP_ADMIN_PASSWORD 에 해당하는 값 = <code>kubectl get secret --namespace default openldap -o jsonpath="{.data.LDAP_ADMIN_PASSWORD}" | base64 --decode; echo</code> 으로 얻은 값)
+
+필요한 만큼 그룹과 사용자를 추가해 주세요.
+
+그 다음 keycloak에서 이 ldap을 사용하도록 설정합니다:
+- Demo realm 에서 User Federation 메뉴를 선택하고, Add provider...ldap 을 선택합니다.
+- Connection URL에 위의 메시지에 나온 URL인 ldap://openldap.default.svc.cluster.local:389 을 입력합니다. k8s cluster 내의 통신이니까 이 접근이 됩니다.
+  [Test Connection] 으로 확인해 보시구요
+- Users DN=dc=example,dc=org , Bind DN=cn=admin,dc=example,dc=org 으로 부여합니다.
+  이건 연습이니까 기본적으로 주어진 설정 내에서 사용하려고 값을 준 것인데 ldap을 다르게 활용하신다면 적절히 고쳐 주시면 됩니다.
+- Bind Credential 에는 위의 LDAP_ADMIN_PASSWORD 에 해당하는 값을 줍니다. [Test Authentication] 으로 확인해 보세요
+- [Save] 하고 [Synchronized all users] 하시면 됩니다.
+
+
+## Jenkins 설치 및 설정
+
 
 
 
