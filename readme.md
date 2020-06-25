@@ -28,7 +28,7 @@ keycloak을 위한 ingress 를 설정합시다.
   <code>192.128.205.10      keycloak.k8s.com </code>
 - 다음으로 ingress 를 추가합니다.
   <pre><code>$ KEYCLOAK_HOST=keycloak.k8s.com
-  $ cat &gt; keycloak-ingress.yaml &lt;&lt;EOF
+  $ cat &gt; keycloak-ing.yaml &lt;&lt;EOF
   apiVersion: extensions/v1beta1
   kind: Ingress
   metadata:
@@ -45,7 +45,7 @@ keycloak을 위한 ingress 를 설정합시다.
             serviceName: keycloak
             servicePort: 8080
   EOF
-  $ kubectl apply -f keycloak-ingress.yaml
+  $ kubectl apply -f keycloak-ing.yaml
   </code></pre>
   
 여기까지 하면 위의 ingress-nginx 의 32443 포트로 (https://keycloak.k8s.com:32443) 접속이 가능해집니다. 
@@ -366,7 +366,11 @@ https://jenkins.io/projects/jcasc/</code></pre>
 
 이 메시지들과는 별개로 jenkins는 정상부팅되지 않을 겁니다. 기본적으로 설정된 persistent volume claim 이 없는 값이거든요.
 이걸 해결하기 위해 다음과 같이 설정합니다 (내용을 단순화했습니다) :
-<pre><code>spec:
+<pre><code>$ docker run --name jenkins_test jenkins/jenkins:lts  # jenkins 이미지로부터 jenkins_home을 얻어야 함
+$ docker cp jenkins_test:/var/jenkins_home ./jenkins_home
+$ kubectl get deploy jenkins -o yaml > jenkins-deploy.yaml
+$ vi jenkins-deploy.yaml
+spec:
   template:
     spec:
       hostAliases:
@@ -380,8 +384,44 @@ https://jenkins.io/projects/jcasc/</code></pre>
         hostPath:
           path: /vagrant/keycloak/test2/jenkins_home  # 적절한 디렉터리를 잡습니다
           type: ""
+$ kubectl apply -f jenkins-deploy.yaml
+$ kubectl get svc -o yaml jenkins > jenkins-svc.yaml
+$ vi jenkins-svc.yaml
+...
+    nodePort: 31080
+...
+$ kubectl apply -f jenkins-svc.yaml
 </code></pre>
 
-이렇게 하면 일단 뜹니다.
+이렇게 하면 일단 뜹니다. ( PC의 hosts파일 수정하고 http://jenkins.k8s.com:31080 접속 ) 하지만 몇 가지 부족한 게 있을 겁니다.
+- keycloak 관련 설정을 해야 합니다.
+- keycloak 설정할 때 https 접근해야 하는데, 이를 위한 인증서가 필요합니다.
+- keycloak 인증을 브라우저에게 맡기는 js-console 과 달리 jenkins는 내부적으로도 keycloak과 통신하는데, 이 때 인증서를 java가 신뢰하지 않습니다. 
+  브라우저는 사설인증서의 신뢰 여부를 사용자에게 물어보기라도 하는데 java는 그냥 에러나고 끝입니다. 
+  이를 해결하기 위해 java의 cacerts 파일에 사설인증서를 신뢰하도록 처리해야 합니다.
+
+keycloak 관련 설정은 다음과 같이 진행합니다:
+- keycloak 에서, js-console 할 때 했듯이 jenkins 클라이언트를 추가하고 keycloak 연결을 위한 JSON을 얻어 옵니다.
+- 로그인을 합니다. Jenkins 관리 메뉴로 들어가서
+- 플러그인 관리 화면에서 keycloak 플러그인을 설치합니다. (재시작은 필요하지 않더군요)
+- 시스템 설정 화면에서 Global Keycloak Settings --> Keycloak 연결을 위한 JSON 을 입력합니다.
+- 역시 시스템 설정 화면에서 Jenkins Location - Jenkins URL 을 입력합니다. ( http://jenkins.k8s.com:31080 )
+  문제는 이 값이 pod 재시작만으로도 초기화되는 건데.. 
+- Configure Global Security 화면에서 Security Realm을 Keycloak Authentication Plugin 으로 선택합니다.
+  이걸 실행하면 인증방법이 Keycloak 거치는 방법으로 바뀌며 위에서의 설정이 잘못될 경우 로그인을 다시 못하게 됩니다.
+  사실 아직은 pod 재시작만으로도 몇몇 값이 되돌려지기 때문에 문제가 있으면 pod를 재시작하면 됩니다.
+
+인증서는 다음 명령으로 만들고 등록합니다.
+<pre><code>$ openssl req -x509 -new -nodes -days 365 -keyout tls.key -out tls.crt -subj "/CN=keycloak.k8s.com"
+$ kubectl create secret tls keycloak-tls-secret-2020  --cert tls.crt  --key tls.key
+$ vi keycloak-ing.yaml
+...
+  tls:
+    - hosts:
+      - keycloak.k8s.com
+    secretName: keycloak-tls-secret-2020
+</code></pre>
+
+
 
 
