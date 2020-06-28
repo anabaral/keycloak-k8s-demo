@@ -48,7 +48,24 @@ keycloak을 위한 ingress 를 설정합시다.
   $ kubectl apply -f keycloak-ing.yaml
   </code></pre>
   
-여기까지 하면 위의 ingress-nginx 의 32443 포트로 (https://keycloak.k8s.com:32443) 접속이 가능해집니다. 
+여기까지 하면 위의 ingress-nginx 의 31782 포트로 (http://keycloak.k8s.com:31782) 접속이 가능해지겠죠.
+그런데 사실 SSO 사이트가 https 접근을 지원 못하는 건 용납하기 힘들죠.
+
+그래서 우리는 SSL 설정을 해야겠습니다.
+일단 인증서를 다음 명령으로 만들고 이를 ingress에 등록합니다.
+<pre><code>$ openssl req -x509 -new -nodes -days 365 -keyout tls.key -out tls.crt -subj "/CN=keycloak.k8s.com"
+$ kubectl create secret tls keycloak-tls-secret-2020  --cert tls.crt  --key tls.key
+$ vi keycloak-ing.yaml
+...
+  tls:
+    - hosts:
+      - keycloak.k8s.com
+    secretName: keycloak-tls-secret-2020
+$ kubectl apply -f keycloak-ing.yaml
+</code></pre>
+
+이제 https://keycloak.k8s.com:32443 으로 접속이 가능해질 겁니다.
+
 
 ### keycloak 에 영속성(persistency)을 부여하자
 
@@ -337,6 +354,8 @@ $ kubectl apply -f phpldapadmin-deploy.yaml
 
 ## Jenkins 설치 및 설정
 
+### Jenkins 기본 설치
+
 Jenkins를 설치해 보겠습니다. 이것 역시 chart를 수정해서 설치하는 방식이 아니라 일단 기본구성으로 설치해 보고 조금씩 수정해 나가는 전략을 쓸 겁니다.
 <pre><code>$ helm install jenkins stable/jenkins
 NAME: jenkins
@@ -364,6 +383,8 @@ https://jenkins.io/projects/jcasc/</code></pre>
 - port-forward 가 필요하다고 나옵니다. 하지만 이 방식을 쓰지는 않고 nodeport를 쓸 생각입니다. (ingress 추가해서 쓸 수도 있습니다)
 - configuration-as-code 방식이 최신버전에 도입됩니다.
 
+### jenkins_home 을 hostPath로 
+
 이 메시지들과는 별개로 jenkins는 정상부팅되지 않을 겁니다. 기본적으로 설정된 persistent volume claim 이 없는 값이거든요.
 이걸 해결하기 위해 다음과 같이 설정합니다 (내용을 단순화했습니다) :
 <pre><code>$ docker run --name jenkins_test jenkins/jenkins:lts  # jenkins 이미지로부터 jenkins_home을 얻어야 함
@@ -382,7 +403,7 @@ spec:
 #        persistentVolumeClaim:
 #          claimName: jenkins
         hostPath:
-          path: /vagrant/keycloak/test2/jenkins_home  # 적절한 디렉터리를 잡습니다
+          path: /vagrant/keycloak/test2/jenkins_home  # 위에 kubectl cp 로 가져온 위치를 잡습니다
           type: ""
 $ kubectl apply -f jenkins-deploy.yaml
 $ kubectl get svc -o yaml jenkins > jenkins-svc.yaml
@@ -393,35 +414,93 @@ $ vi jenkins-svc.yaml
 $ kubectl apply -f jenkins-svc.yaml
 </code></pre>
 
+### keycloak client 로서의 설정 (https 인증서 포함)
+
+위의 jenkins-deploy.yaml 안에 주석처리한 부분이 기존의 설정입니다. 저 설정대로 띄우려면 미리 PVC를 만들었어야 했을 겁니다.
 이렇게 하면 일단 뜹니다. ( PC의 hosts파일 수정하고 http://jenkins.k8s.com:31080 접속 ) 하지만 몇 가지 부족한 게 있을 겁니다.
 - keycloak 관련 설정을 해야 합니다.
 - keycloak 설정할 때 https 접근해야 하는데, 이를 위한 인증서가 필요합니다.
 - keycloak 인증을 브라우저에게 맡기는 js-console 과 달리 jenkins는 내부적으로도 keycloak과 통신하는데, 이 때 인증서를 java가 신뢰하지 않습니다. 
-  브라우저는 사설인증서의 신뢰 여부를 사용자에게 물어보기라도 하는데 java는 그냥 에러나고 끝입니다. 
+  브라우저는 사설인증서의 신뢰 여부를 사용자에게 물어보기라도 하는데 java는 그냥 에러나고 끝입니다. (kubectl logs 로 확인 가능)
   이를 해결하기 위해 java의 cacerts 파일에 사설인증서를 신뢰하도록 처리해야 합니다.
 
 keycloak 관련 설정은 다음과 같이 진행합니다:
-- keycloak 에서, js-console 할 때 했듯이 jenkins 클라이언트를 추가하고 keycloak 연결을 위한 JSON을 얻어 옵니다.
-- 로그인을 합니다. Jenkins 관리 메뉴로 들어가서
+- Keycloak 로그인 해서 Demo realm 으로 들어가, js-console 할 때 했듯이 jenkins 클라이언트를 추가하고 keycloak 연결을 위한 JSON을 얻어 옵니다.
+- Jenkins 로그인을 합니다. Jenkins 관리 메뉴로 들어가서
 - 플러그인 관리 화면에서 keycloak 플러그인을 설치합니다. (재시작은 필요하지 않더군요)
-- 시스템 설정 화면에서 Global Keycloak Settings --> Keycloak 연결을 위한 JSON 을 입력합니다.
-- 역시 시스템 설정 화면에서 Jenkins Location - Jenkins URL 을 입력합니다. ( http://jenkins.k8s.com:31080 )
-  문제는 이 값이 pod 재시작만으로도 초기화되는 건데.. 
-- Configure Global Security 화면에서 Security Realm을 Keycloak Authentication Plugin 으로 선택합니다.
+- 시스템 설정 화면에서 
+  - Global Keycloak Settings - Keycloak JSON : Keycloak 연결을 위한 JSON 을 입력합니다.
+  - Jenkins Location - Jenkins URL : http://jenkins.k8s.com:31080 을 입력합니다. (이 값은 pod 재시작으로 초기화됨)
+  - Jenkins Location - System Admin e-mail address : keycloak에서 추가한 사용자 중 관리자로 할 것의 이메일을 입력합니다.
+- Configure Global Security 화면에서 Security Realm을 Keycloak Authentication Plugin 으로 선택합니다. (이 값은 pod 재시작으로 초기화됨)
   이걸 실행하면 인증방법이 Keycloak 거치는 방법으로 바뀌며 위에서의 설정이 잘못될 경우 로그인을 다시 못하게 됩니다.
   사실 아직은 pod 재시작만으로도 몇몇 값이 되돌려지기 때문에 문제가 있으면 pod를 재시작하면 됩니다.
 
-인증서는 다음 명령으로 만들고 등록합니다.
-<pre><code>$ openssl req -x509 -new -nodes -days 365 -keyout tls.key -out tls.crt -subj "/CN=keycloak.k8s.com"
-$ kubectl create secret tls keycloak-tls-secret-2020  --cert tls.crt  --key tls.key
-$ vi keycloak-ing.yaml
+이 시점에서 앞서 js-console 이나 ldap 구성할 때 만들어 둔 사용자 정보를 이용해 keyCloak 인증을 해 볼 수 있습니다. 되나요?
+사실 안될 겁니다. kubectl logs 명령으로 확인해 보면 대략 다음과 같은 메시지를 확인할 수 있습니다.
+<pre><code>...
+Caused: sun.security.validator.ValidatorException: PKIX path building failed
+...</code></pre>
+
+앞서 keycloak 에 인증서를 만들어 https 접근이 되게 설정한 것을 기억하실 겁니다.
+이 인증서를 신뢰하도록 java의 신뢰 목록을 수정해야 합니다. 신뢰 목록 파일은 ${JAVA_HOME}/jre/lib/security/cacerts 인데
+JAVA_HOME 은 이미지마다 다르므로 신경써서 찾아야겠죠.
+<pre><code>$ CURRENT_POD=$(kubectl get po -l app.kubernetes.io/name=jenkins -o jsonpath='{.items[0].metadata.name}')
+$ kubectl cp tls.crt  ${CURRENT_POD}:/tmp/tls.crt
+$ kubectl exec -it ${CURRENT_POD} jenkins -- bash
+in_pod $ keytool -importcert -keystore ${JAVA_HOME}/jre/lib/security/cacerts -storepass changeit -file /tmp/tls.crt -alias letsencrypt
+in_pod $ exit
+$ kubectl cp ${CURRENT_POD}:/${JAVA_HOME}/jre/lib/security/cacerts /vagrant/keycloak/test2/jenkins_home/ssl/cacerts
+</code></pre>
+위에서 /vagrant/keycloak/test2/jenkins_home/ssl/cacerts 는 제가 신뢰목록을 뽑을 적당한 디렉터리를 정한 겁니다. 
+자신이 원하는 디렉터리를 정하면 됩니다 (다만 모든 노드에서 공유가 되는 위치여야 하니 최소한 /vagrant 밑에 있어야겠죠)  
+이제 이 신뢰목록으로 새로 뜰 jenkins의 신뢰목록을 바꿔치기 할 겁니다.
+<pre><code>$ vi jenkins-deploy.yaml
 ...
-  tls:
-    - hosts:
-      - keycloak.k8s.com
-    secretName: keycloak-tls-secret-2020
+    spec:
+      containers:
+...
+        name: jenkins
+...
+        volumeMounts:
+        - mountPath: /usr/local/openjdk-8/jre/lib/security/cacerts
+          name: java-cacerts
+          subPath: cacerts
+...
+      volumes:
+      - name: java-cacerts
+        hostPath:
+          path: /vagrant/keycloak/test2/jenkins_home/ssl/
+...
+$ kubectl apply -f jenkins-deploy.yaml
 </code></pre>
 
+이제 거의 다 끝났습니다. 하나 남았네요.
+2020년 6월 현재 helm으로 설치되는 Jenkins는 casc 개념을 가집니다. 문제는 이 설정의 일부를 ConfigMap으로 선언했기 때문에 이게 상수처럼 되어서
+재부팅할 때마다 이 값이 내가 설정한 값을.. 전부는 아니고 일부를 덮어씁니다.
+
+그래서 위에 보시면 pod 재시작하면 리셋된다는 값이 있을 겁니다. 리셋되는 값에는 securityRealm 이나 authorizationStrategy 같은 값도 있어서,
+재시작하면 처음 로그인하는 방식의 로그인 화면이 나올 겁니다.
+
+이걸 리셋되지 않게 하려면, 좀 더 나은 방법이 있을 수도 있겠지만, 
+일단은 configmap을 수정하는 식으로 접근하겠습니다. JSON 형태이니 수정할 때 조심하세요.
+<pre><code>$ kubectl get cm jenkins-jenkins-jcasc-config -o yaml > jenkins-jenkins-jcasc-config-cm.yaml
+$ vi jenkins-jenkins-jcasc-config-cm.yaml
+...
+data:
+  jcasc-default-config.yaml: # json이라 조금 편집하기 힘들텐데
+...  authorizationStrategy:\n    loggedInUsersCanDoAnything:\n      allowAnomymousRead: false
+     --> authorizationStrategy: "legacy"\n
+...  securityRealm:\n    legacy\n   --> securityRealm:\n    keycloak\n
+... jenkinsUrl:
+    \"http://jenkins:8080\"\n  --> jenkinsUrl:
+    \"http://jenkins.k8s.com:31080\"\n
+$ kubectl apply -f jenkins-jenkins-jcasc-config-cm.yaml
+</code></pre>
+
+이걸 수정하면 pod를 재시작해서 재시작 후에도 keycloak 인증을 요구하는 지 확인해 볼 필요가 있습니다.
+
+준비한 것은 여기까지입니다.
 
 
 
