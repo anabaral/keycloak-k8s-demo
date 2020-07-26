@@ -23,7 +23,14 @@ for i in k8s-head k8s-node-1 k8s-node-2 ; do \
   done      
 암호 열심히 넣고 Y 엔터치고...
 
+# 위에서 열심히 해 봐야 결국 들어가 /etc/fstab 수정해야 함...
+k8s-head $ ssh vagrant@k8s-node-1 
+k8s-node-1 $ sudo sh
+# echo "192.128.205.10:/mnt/nfs_share /mnt/nfs  nfs    auto     0 0" >> /etc/fstab
 
+k8s-head $ ssh vagrant@k8s-node-2
+k8s-node-2 $ sudo sh
+# echo "192.128.205.10:/mnt/nfs_share /mnt/nfs  nfs    auto     0 0" >> /etc/fstab
 
 # k8s-head에서
 git clone https://exxsyseng@bitbucket.org/exxsyseng/nfs-provisioning.git    # 뭔가 미심쩍은데, 원본이 어디에 있을 듯.
